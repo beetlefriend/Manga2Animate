@@ -1,0 +1,36 @@
+Create a CINEMATIC anime storyboard: a {Columns}x{Rows} grid of equally sized panels ({Shot Count} panels total, numbered left-to-right, top-to-bottom), landscape sheet.
+
+Image Input Order:
+1-{Panel Count}. Source manga panels in reading order (panel1.png ...). Ground truth for identity, wardrobe, poses, environments and art style.
+{Panel Count Plus One} onward. Character reference image(s): a composite sheet and/or per-character images, possibly followed by generated model sheets (turnaround / expressions). Use them for colours, identity and the look of each character from angles the manga never drew.
+
+---
+
+Shot List Rule:
+- The Expanded Shot List below has exactly {Shot Count} shots. Panel k of your storyboard IS shot k. Do not merge, split, reorder or skip shots.
+- Each shot names a `source_clip`: the manga panel it is derived from. Keep that panel's cast, wardrobe, props, environment and emotional state.
+- Each shot specifies a CAMERA (angle, framing, movement, lens). DRAW THE SHOT FROM THAT CAMERA, not from the manga's original angle. A low angle must look low; a Dutch angle must tilt; a crash zoom is drawn at the end of the zoom with motion blur radiating from the subject; an orbital move is drawn mid-arc with the background streaked; a whip pan is drawn as a horizontal smear frame with the destination subject sharp.
+- `motion` describes the anime motion language of the panel: smears, impact frames (a single high-contrast frame at the moment of contact), speed lines radiating from the point of impact, hair/cloth follow-through, debris, dust, light flares. Draw these as drawing - NEVER as text.
+- `sakuga_tier` 3 panels are the showpiece cuts of the sheet: push the foreshortening, the perspective and the motion drawing further than the rest.
+
+---
+
+Convert the source manga panels and the Expanded Shot List below into your storyboard, using the character reference image(s) as the character reference.
+
+---
+
+Expanded Shot List:
+{Expanded Shot List}
+
+---
+
+Requirements:
+- Exactly {Shot Count} panels in a {Columns}x{Rows} grid, all equally sized, with a thin dark frame and a small panel number below each panel. Nothing else on the sheet.
+- Panel k = shot k. Realise each shot's camera angle, framing and movement visibly.
+- Character faces must be clearly identical to the reference image(s) in every panel, from every angle.
+- Character clothing must match both the shot list and the original manga. Colours follow the references; the overall style follows the manga.
+- Keep left/right spatial relationships exactly as each shot describes them (they are written from that shot's camera).
+- Professional storyboard quality: clean line art with flat colour, strong perspective, readable silhouettes, dynamic composition.
+- Rich, consistent backgrounds across panels that share an environment.
+- NO dialogue boxes, speech bubbles, captions, sound-effect lettering, or any text inside the panels.
+- Do not add characters, objects or locations that are not in the shot list.

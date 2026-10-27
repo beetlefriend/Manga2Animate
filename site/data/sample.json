@@ -1,0 +1,18 @@
+{
+  "sample": true,
+  "updated_at": "2026-01-01T00:00:00Z",
+  "treasury": { "sol": 12.5, "usd_estimate": 2500 },
+  "fees_in_total_usd": 4100,
+  "credits_bought_usd": 3280,
+  "cuts": [
+    { "id": "cut-001", "title": "Sample cut: rooftop duel", "manga": "Sample manga (public domain)", "status": "done", "cost_usd": 38, "funded_by": "fees", "video_url": "" },
+    { "id": "cut-002", "title": "Sample cut: the letter", "manga": "Sample manga (community)", "status": "in_production", "cost_usd": 41, "funded_by": "fees", "video_url": "" },
+    { "id": "cut-003", "title": "Sample cut: first day", "manga": "Sample manga (original)", "status": "queued", "cost_usd": 0, "funded_by": "fees", "video_url": "" }
+  ],
+  "queue": [
+    { "title": "Sample chapter A", "source": "public domain", "votes": 23 },
+    { "title": "Sample chapter B", "source": "community submission", "votes": 17 },
+    { "title": "Sample chapter C", "source": "original work, licensed", "votes": 9 },
+    { "title": "Sample chapter D", "source": "public domain", "votes": 4 }
+  ]
+}

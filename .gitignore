@@ -25,6 +25,15 @@
 # ---- ALLOW: project page (static site, deployed to Vercel) ----
 !/project_page/
 
+# ---- ALLOW: Sakuga Kit additions (creative layer docs, demo site, treasury tooling) ----
+!/site/
+!/docs/
+!/treasury/
+!/tests/
+/site/_screenshots/
+/site/node_modules/
+/treasury/ledger.json
+
 # ---- ALLOW: ablation study code (results stay untracked, see below) ----
 # !/ablation/
 

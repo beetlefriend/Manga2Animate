@@ -235,12 +235,31 @@ def main():
         help="Panels the storyboard should have (default: 6). A detection that misses or "
              "splits one is reconciled against the grid; 0 disables the check.",
     )
+    parser.add_argument(
+        "--storyboard",
+        type=Path,
+        default=None,
+        help="Crop this storyboard image instead of the iteration's bestStoryboard "
+             "(create_video.py --creative passes iter<N>/creative/bestStoryboard.png)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output directory (default: <storyboard dir>/storyboard_panels)",
+    )
     args = parser.parse_args()
 
-    target_dir = args.results_root / args.target
-    run_dir = resolve_run_dir(target_dir, args.time)
-    storyboard_path = find_best_storyboard(run_dir, args.iter)
-    out_dir = storyboard_path.parent / "storyboard_panels"
+    if args.storyboard is not None:
+        storyboard_path = args.storyboard
+        if not storyboard_path.is_file():
+            raise FileNotFoundError(f"--storyboard not found: {storyboard_path}")
+        run_dir = storyboard_path.parent
+    else:
+        target_dir = args.results_root / args.target
+        run_dir = resolve_run_dir(target_dir, args.time)
+        storyboard_path = find_best_storyboard(run_dir, args.iter)
+    out_dir = args.out if args.out is not None else storyboard_path.parent / "storyboard_panels"
 
     info(f"Run: {run_dir.name}")
     info(f"Storyboard: {storyboard_path}")

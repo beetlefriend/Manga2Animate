@@ -1,0 +1,15 @@
+[Image 1] is the storyboard panel for the single shot described in the 'Shot' JSON below. [Image 2] onward, if present, are character model sheets: use them to keep every character's face, hair, outfit and colours identical to the storyboard.
+
+Direct this shot like a key-animation cut from a high-end TV anime:
+
+1. Realise the CAMERA exactly as specified in 'camera': angle, framing, movement and lens. The camera moves only in the way described (a crash zoom zooms, a whip pan whips, an orbital arcs around the subject, a static hold does not drift). No other cuts or camera changes inside the clip.
+2. Realise the MOTION exactly as specified in 'motion': anime timing with clear anticipation, a fast action, and settle. Use smears and a single high-contrast impact frame at the moment of contact when the shot calls for it; let hair and cloth follow through; add the particles, debris, dust or light flares the shot names and nothing else.
+3. Keep every character identical to the storyboard panel and the model sheets: same face, hairstyle, outfit, colours and asymmetric features on the correct side. No new characters, objects, backgrounds or locations.
+4. Follow 'environment' for the setting and lighting, and keep the scene's left/right layout exactly as 'description' states it (it is written from this shot's camera).
+5. Execute only the action in 'description'. Do not add outcomes, gestures or events that are not described.
+6. Do not render any text: no dialogue boxes, speech bubbles, captions, subtitles or sound-effect lettering. If the storyboard panel contains lettering, render the corresponding visual effect and drop the letters entirely.
+7. Cel-shaded 2D anime rendering with clean line art, flat colours and consistent line weight; no photorealism, no 3D look, no style drift from the storyboard.
+8. Keep the whole clip one continuous take of the requested duration, with a stable, non-flickering character design from the first frame to the last.
+
+Shot:
+<script>

@@ -80,6 +80,33 @@ def parse_args():
         help="Storyboard generation/evaluation backend (default: gemini, "
              "or STORYBOARD_BACKEND from .env if set)",
     )
+    # --- Creative Expansion ---------------------------------------------------
+    parser.add_argument(
+        "--creative",
+        action="store_true",
+        help="After the faithful rounds, expand the final script into a cinematic shot "
+             "list and draw its storyboard (CREATIVE_MODE=true in .env does the same)",
+    )
+    parser.add_argument(
+        "--creativity",
+        default=None,
+        help="conservative | balanced | aggressive (aliases: faithful, sakuga). "
+             "Default: CREATIVITY_LEVEL from .env, or balanced",
+    )
+    parser.add_argument(
+        "--character-sheets",
+        choices=["auto", "true", "false"],
+        default=None,
+        help="Generate per-character model sheets before the first round. auto = only "
+             "when the target ships a single composite ref.png (default: CHARACTER_SHEETS "
+             "from .env, or auto)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the stages that would run and write the creative prompts to disk, "
+             "without calling any model. Needs no credentials.",
+    )
     return parser.parse_args()
 
 
@@ -87,6 +114,15 @@ args = parse_args()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TARGET_RESULTS_DIR = BASE_DIR / args.results_root / args.target
+
+if args.dry_run:
+    # The stage modules build a Gemini client at import time; a placeholder key
+    # lets them import without credentials. Nothing is ever sent with it.
+    os.environ["DRY_RUN"] = "1"
+    if not os.environ.get("GOOGLE_CLOUD_PROJECT") and not os.environ.get("GEMINI_API_KEY"):
+        os.environ["GEMINI_API_KEY"] = "dry-run-placeholder"
+if args.character_sheets:
+    os.environ["CHARACTER_SHEETS"] = args.character_sheets
 
 
 def resolve_run_id() -> str:
@@ -112,7 +148,7 @@ os.environ["TARGET"] = args.target
 os.environ["TARGET_ROOT"] = args.target_root
 os.environ["RESULTS_ROOT"] = args.results_root
 os.environ["RUN_ID"] = RUN_ID
-os.environ["GOOGLE_CLOUD_PROJECT"] = GCP_PROJECT_MAP[args.project]
+os.environ["GOOGLE_CLOUD_PROJECT"] = GCP_PROJECT_MAP[args.project] or ""
 
 STORYBOARD_BACKEND = args.storyboard_backend or os.environ.get("STORYBOARD_BACKEND", "gemini")
 if STORYBOARD_BACKEND not in {"gemini", "flux2"}:
@@ -122,13 +158,28 @@ os.environ["STORYBOARD_BACKEND"] = STORYBOARD_BACKEND
 init_log_file(RUN_DIR / "log.txt")
 
 # Import modules AFTER setting TARGET so module-level paths resolve correctly.
-from src import metrics
-import src.magi as magi
+# src.magi (torch + transformers) is imported inside run_magi() so that a
+# --dry-run, or a resumed run whose transcript already exists, never loads it.
+from src import creative_config, metrics
 import src.create_character_description as create_character_description
+import src.character_sheets as character_sheets
 import src.create_script as create_script
 import src.evaluate_scripts as evaluate_scripts
 import src.generate_storyboard as generate_storyboard
 import src.evaluate_storyboards as evaluate_storyboards
+import src.creative_expansion as creative_expansion
+import src.creative_storyboard as creative_storyboard
+
+CREATIVE = creative_config.load_settings(
+    level=args.creativity,
+    enabled=True if args.creative else None,
+    num_clips=int(os.environ.get("NUM_CLIPS", "6")),
+)
+# A sheets stage that already ran in an earlier invocation must be visible to
+# the stages below even when auto-resume skips it, so export the dir up front.
+SHEETS_DIR = character_sheets.sheets_dir()
+if (SHEETS_DIR / "manifest.json").is_file():
+    os.environ["CHARACTER_SHEETS_DIR"] = str(SHEETS_DIR)
 
 
 if args.to_iter is not None:
@@ -195,7 +246,12 @@ def character_stage_done() -> bool:
 
 
 def magi_stage_done() -> bool:
-    return _nonempty_file(magi.RESULTS_DIR / "character" / "transcript.txt")
+    return _nonempty_file(create_character_description.RESULTS_DIR / "character" / "transcript.txt")
+
+
+def run_magi():
+    import src.magi as magi
+    magi.main()
 
 
 def character_description_done() -> bool:
@@ -305,11 +361,24 @@ def _metric_key(stage_name: str) -> str:
     return f"iter{m.group(1)}.{tail}" if m else tail
 
 
-def run_stage(stage_name: str, done_fn, action):
+def run_stage(stage_name: str, done_fn, action, dry_run_action=None):
+    """Run one stage, honouring --auto-resume and --dry-run.
+
+    `dry_run_action` is what a stage does on --dry-run (the creative stages write
+    their prompts to disk); stages without one are only listed.
+    """
     key = _metric_key(stage_name)
-    if args.auto_resume and done_fn():
+    if (args.auto_resume or args.dry_run) and done_fn():
         success(f"{stage_name} already complete — skipping")
         metrics.mark_skipped(key)
+        return
+
+    if args.dry_run:
+        section(stage_name)
+        if dry_run_action is not None:
+            dry_run_action()
+        else:
+            warn("--dry-run: stage would run here (no model calls made)")
         return
 
     section(stage_name)
@@ -321,6 +390,30 @@ def run_stage(stage_name: str, done_fn, action):
             f"{stage_name} finished, but required output files are still missing or invalid. "
             f"Check the log before resuming."
         )
+
+
+def run_character_sheets():
+    """Model sheets per character, then make them visible to later stages."""
+    character_sheets.main()
+    if (SHEETS_DIR / "manifest.json").is_file():
+        os.environ["CHARACTER_SHEETS_DIR"] = str(SHEETS_DIR)
+        info(f"Character sheets exported: {SHEETS_DIR}")
+
+
+def run_creative(iteration: int):
+    """Creative Expansion on the final faithful iteration."""
+    run_stage(
+        f"CREATIVE  ·  shot expansion ({CREATIVE.level}, {CREATIVE.shot_count} shots)",
+        lambda: creative_expansion.done(iteration),
+        lambda: creative_expansion.main(iteration, CREATIVE),
+        dry_run_action=lambda: creative_expansion.main(iteration, CREATIVE),
+    )
+    run_stage(
+        f"CREATIVE  ·  creative storyboard ({CREATIVE.num_storyboards} candidate(s))",
+        lambda: creative_storyboard.done(iteration),
+        lambda: creative_storyboard.main(iteration, CREATIVE),
+        dry_run_action=lambda: creative_storyboard.main(iteration, CREATIVE),
+    )
 
 
 def run_iteration(iteration: int, mode: str):
@@ -351,30 +444,40 @@ def _run_pipeline():
         f"[bold cyan]Manga → Storyboard pipeline  ·  "
         f"target=[white]{args.target}[/]  ·  run=[white]{RUN_ID}[/]  ·  "
         f"final_iter=[white]{FINAL_ITER}[/]  ·  auto_resume=[white]{args.auto_resume}[/]  ·  "
-        f"storyboard_backend=[white]{STORYBOARD_BACKEND}[/]"
+        f"storyboard_backend=[white]{STORYBOARD_BACKEND}[/]  ·  "
+        f"creative=[white]{CREATIVE.level if CREATIVE.enabled else 'off'}[/]"
+        + ("  ·  [yellow]DRY RUN[/]" if args.dry_run else "")
     )
 
     info(f"Run directory: {RUN_DIR}")
 
     record_run_config()
 
-    run_stage("STAGE 0  ·  MAGI transcript", magi_stage_done, magi.main)
+    run_stage("STAGE 0  ·  MAGI transcript", magi_stage_done, run_magi)
     run_stage(
         "STAGE 0  ·  Character description",
         character_description_done,
         create_character_description.main,
     )
+    if character_sheets.should_generate():
+        run_stage(
+            "STAGE 0  ·  Character model sheets",
+            character_sheets.done,
+            run_character_sheets,
+            dry_run_action=character_sheets.main,
+        )
+    else:
+        info("Character model sheets: skipped (CHARACTER_SHEETS=false, or the target ships per-character refs)")
 
     if args.from_iter is not None:
         start_iter = args.from_iter
         info(f"Manual start: iter {start_iter}")
-    elif args.auto_resume:
+    elif args.auto_resume or args.dry_run:
         start_iter = first_incomplete_iter(FINAL_ITER)
         if start_iter <= FINAL_ITER:
             info(f"Auto-resume detected first incomplete iter: iter {start_iter}")
         else:
             success(f"All iterations iter0~iter{FINAL_ITER} are already complete.")
-            return
     else:
         start_iter = 0
 
@@ -382,8 +485,16 @@ def _run_pipeline():
         mode = "without" if it == 0 else read_mode_for_next_iter(it - 1)
         run_iteration(it, mode)
 
+    if CREATIVE.enabled:
+        if args.dry_run and not iteration_done(FINAL_ITER):
+            warn(f"--dry-run: creative stages need iter{FINAL_ITER}/bestScript.json; "
+                 f"run the faithful rounds first to see the creative prompts")
+        else:
+            run_creative(FINAL_ITER)
+
     section("Pipeline complete")
-    success(f"All iteration(s) through iter{FINAL_ITER} finished.")
+    success(f"All iteration(s) through iter{FINAL_ITER} finished"
+            + (f", creative layer ({CREATIVE.level}) done." if CREATIVE.enabled else "."))
 
 
 def main():

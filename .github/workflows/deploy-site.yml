@@ -1,0 +1,50 @@
+# Deploy site/ (the Sakuga Kit page) to GitHub Pages.
+#
+# The upstream workflow (deploy-pages.yml) publishes project_page/ to the same
+# Pages environment; whichever ran last is what the URL shows. In this fork the
+# kit page is the one that should win, so this workflow also runs on every push
+# to master that touches site/ and can be triggered by hand. Disable the other
+# workflow in the fork's Actions tab if you never want the paper page deployed.
+name: Deploy Sakuga Kit site
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "site/**"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect site files
+        run: |
+          mkdir -p _site
+          rsync -a --delete --exclude "_screenshots" --exclude "node_modules" site/ _site/
+          touch _site/.nojekyll
+          du -sh _site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

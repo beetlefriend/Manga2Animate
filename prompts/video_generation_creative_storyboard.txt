@@ -1,0 +1,15 @@
+[Image 1] is a storyboard sheet; each numbered panel is one shot of the 'Shot List' JSON below, in order. [Image 2] onward, if present, are character model sheets: use them to keep every character's face, hair, outfit and colours identical across the whole video.
+
+Direct this sequence like a key-animation scene from a high-end TV anime:
+
+1. ** Do not render any text in the video - no dialogue boxes, speech bubbles, captions, subtitles or sound-effect lettering. Where the storyboard contains lettering, render the visual effect and drop the letters entirely. **
+2. Play the shots in order, one continuous video, cutting from shot to shot. Give each shot roughly its 'duration_hint' in seconds; do not add shots, do not skip shots, do not reorder.
+3. For every shot realise the CAMERA in 'camera' exactly: angle, framing, movement and lens. A crash zoom zooms, a whip pan whips into the next shot, an orbital arcs around the subject, a Dutch angle tilts, a static hold does not drift. Hard cut between shots unless 'camera.movement' describes a pan or push that carries into the next shot.
+4. For every shot realise the MOTION in 'motion': anime timing with anticipation, fast action and settle; smears and a single high-contrast impact frame at the moment of contact when asked for; hair and cloth follow-through; only the particles, debris, dust or light flares the shot names. Shots with 'sakuga_tier' 3 are the showpiece cuts: give them the most dynamic motion and the strongest perspective.
+5. Use the 'characters' descriptions and the model sheets for appearance and keep every character identical across shots: same face, hairstyle, outfit, colours and asymmetric features on the correct side. Use 'environment' for each setting and keep the left/right layout exactly as each shot's 'description' states (it is written from that shot's camera).
+6. Do not add characters, objects, backgrounds, locations or events that are not in the shot list.
+7. Cel-shaded 2D anime rendering with clean line art, flat colours, consistent line weight and no style drift between shots; no photorealism, no 3D look.
+8. The generated video can only use English audio.
+
+Shot List:
+<script>

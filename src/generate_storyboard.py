@@ -6,7 +6,7 @@ from google.genai import types
 from dotenv import load_dotenv
 from src.log import error, info, status, step, subsection, success, warn
 from src.runs import results_dir_from_env
-from src.utils import find_character_ref_images, make_genai_client, with_retry
+from src.utils import character_ref_images, make_genai_client, with_retry
 
 load_dotenv()
 
@@ -61,7 +61,7 @@ def generate_one(best_script: dict, iteration: int, sb_index: int):
 
     image_paths = [
         *(TARGET_DIR / "manga_panels" / f"panel{i}.png" for i in range(1, NUM_CLIPS + 1)),
-        *(p for _, p in find_character_ref_images(TARGET_DIR)),
+        *(p for _, p in character_ref_images(TARGET_DIR)),
     ]
 
     parts = []

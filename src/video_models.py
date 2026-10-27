@@ -166,7 +166,7 @@ def fetch_result(result, out_path):
 @dataclass
 class Backend:
     name: str
-    mode: str                       # "ref" | "i2v"
+    mode: str                       # "ref" | "i2v" -- the route in use (see `modes`)
     model_id: str
     ref_duration: int = 15          # length of the single full-storyboard video
     panel_clamp: tuple = (2, 5)     # (min, max) seconds for one i2v panel clip
@@ -176,6 +176,25 @@ class Backend:
     env_keys: tuple = ()            # env vars that must be set before running
     weights_dirname: str = ""       # local models: directory under OSVG_MODELS_DIR
     prompt_limit: int = 0           # max prompt characters, 0 = no limit
+    # --- Creative Expansion additions --------------------------------------
+    # Every route the model can run. `mode` above is the paper's default; the
+    # driver's --route auto may switch to another entry here (a model that takes
+    # a first frame AND reference images can run either route).
+    modes: tuple = ()
+    # Longest single request the provider accepts on the ref route, so a long
+    # expanded shot list can ask for more than the paper's fixed 15s.
+    max_ref_duration: int = 15
+    # The provider takes additional reference images (character model sheets)
+    # alongside the storyboard / first frame.
+    supports_extra_refs: bool = False
+    max_extra_refs: int = 4
+
+    def __post_init__(self):
+        if not self.modes:
+            self.modes = (self.mode,)
+
+    def supports(self, route):
+        return route in self.modes
 
     @property
     def weights_dir(self):
@@ -199,11 +218,15 @@ class Backend:
         API model gets. A backend with a small text budget overrides this."""
         return None
 
-    def submit(self, prompt, image, duration, seed=None):
+    def submit(self, prompt, image, duration, seed=None, extra_refs=()):
         """`seed` is honoured only where the previous scripts used one (anisora).
         The hosted providers deliberately ignore it: their two candidates are two
         identical requests told apart by sampling, which is how every comparison
-        run so far was produced."""
+        run so far was produced.
+
+        `extra_refs` are additional reference image URLs / paths (character
+        model sheets). Only backends with `supports_extra_refs` use them; the
+        driver never passes them to the others."""
         raise NotImplementedError
 
     def poll(self, task_id, interval=15, timeout=1800):
@@ -217,7 +240,7 @@ class Backend:
 # WAN  (DashScope, i2v)
 # ======================
 class WanBackend(Backend):
-    def submit(self, prompt, image, duration, seed=None):
+    def submit(self, prompt, image, duration, seed=None, extra_refs=()):
         headers = {
             "Authorization": f"Bearer {DASHSCOPE_API_KEY}",
             "Content-Type": "application/json",
@@ -260,19 +283,33 @@ class WanBackend(Backend):
 # SEEDANCE  (BytePlus Ark, reference image)
 # ======================
 class SeedanceBackend(Backend):
-    def submit(self, prompt, image, duration, seed=None):
+    """Seedance on BytePlus Ark.
+
+    The same endpoint takes the image as a `reference_image` (the paper's ref
+    route: whole storyboard in, one continuous video out) or as a `first_frame`
+    (the i2v route: one clip per storyboard panel), so this backend declares
+    both routes and picks the role from the route in use. Extra reference
+    images (character model sheets) ride along as more `reference_image`
+    entries on either route.
+    """
+
+    def submit(self, prompt, image, duration, seed=None, extra_refs=()):
         headers = {
             "Authorization": f"Bearer {ARK_API_KEY}",
             "Content-Type": "application/json",
         }
+        role = "first_frame" if self.mode == "i2v" else "reference_image"
+        content = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": image}, "role": role},
+        ]
+        for ref in list(extra_refs)[: self.max_extra_refs]:
+            content.append({"type": "image_url", "image_url": {"url": ref}, "role": "reference_image"})
         payload = {
             "model": self.model_id,
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": image}, "role": "reference_image"},
-            ],
+            "content": content,
             "ratio": "16:9",
-            "resolution": "720p",
+            "resolution": os.getenv("SEEDANCE_RESOLUTION", "720p"),
             "duration": duration,
             "generate_audio": True,
         }
@@ -315,18 +352,23 @@ class MiniMaxApiBackend(Backend):
     the fetch out of the loop entirely, which is what the API accepts here.
     """
 
-    def submit(self, prompt, image, duration, seed=None):
+    def submit(self, prompt, image, duration, seed=None, extra_refs=()):
         headers = {
             "Authorization": f"Bearer {MINIMAX_API_KEY}",
             "Content-Type": "application/json",
         }
+        content = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": _as_data_uri(image)},
+             "role": "reference_image"},
+        ]
+        # Same content-list shape as Seedance; extra model sheets are inlined too.
+        for ref in list(extra_refs)[: self.max_extra_refs]:
+            content.append({"type": "image_url", "image_url": {"url": _as_data_uri(ref)},
+                            "role": "reference_image"})
         payload = {
             "model": self.model_id,
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": _as_data_uri(image)},
-                 "role": "reference_image"},
-            ],
+            "content": content,
             "duration": duration,
             "resolution": "768P",
             "ratio": "16:9",
@@ -400,7 +442,7 @@ class MiniMaxLocalBackend(Backend):
                 f"(weights: {self.weights_dir}), or point MINIMAX_LOCAL_PORT at an existing one."
             ) from e
 
-    def submit(self, prompt, image, duration, seed=None):
+    def submit(self, prompt, image, duration, seed=None, extra_refs=()):
         payload = {
             "model": self.model_id,
             "prompt": prompt,
@@ -602,10 +644,133 @@ class AnisoraBackend(Backend):
 
 
 # ======================
+# HIGGSFIELD  (api.higgsfield.ai, model path + body template from .env)
+# ======================
+#
+# Higgsfield fronts many video models (Seedance 2.x, Kling, MiniMax H3, Veo,
+# Wan ...) behind one request lifecycle: POST a model-specific path with a JSON
+# body, get {request_id, status_url}, poll status_url until `status` is
+# `completed`, read `video.url`. Auth is `Authorization: Key <id>:<secret>`.
+#
+# The body differs per model, so it is not hard-coded here: HIGGSFIELD_MODEL_PATH
+# names the endpoint and HIGGSFIELD_BODY_TEMPLATE is a JSON string with
+# {prompt}, {image_url}, {duration}, {extra_refs} placeholders, copied from the
+# model's page on docs.higgsfield.ai. Treat this backend as a thin, verified-
+# by-you adapter: the lifecycle is from the docs, the body is yours.
+HIGGSFIELD_API_BASE = os.getenv("HIGGSFIELD_API_BASE", "https://api.higgsfield.ai")
+HIGGSFIELD_DEFAULT_TEMPLATE = (
+    '{"prompt": {prompt}, "image_url": {image_url}, "duration": {duration}, '
+    '"aspect_ratio": "16:9", "image_urls": {extra_refs}}'
+)
+
+
+class HiggsfieldBackend(Backend):
+    def check_env(self):
+        super().check_env()
+        if not os.getenv("HIGGSFIELD_MODEL_PATH"):
+            raise RuntimeError(
+                "higgsfield: set HIGGSFIELD_MODEL_PATH to the model's endpoint path from "
+                "docs.higgsfield.ai (e.g. /bytedance/seedance/...) and, if its body differs "
+                "from the default, HIGGSFIELD_BODY_TEMPLATE."
+            )
+
+    @staticmethod
+    def _headers():
+        key_id = os.getenv("HIGGSFIELD_API_KEY", "")
+        secret = os.getenv("HIGGSFIELD_API_SECRET", "")
+        return {"Authorization": f"Key {key_id}:{secret}", "Content-Type": "application/json"}
+
+    def build_body(self, prompt, image, duration, extra_refs=()):
+        template = os.getenv("HIGGSFIELD_BODY_TEMPLATE", HIGGSFIELD_DEFAULT_TEMPLATE)
+        body = (
+            template.replace("{prompt}", json.dumps(prompt))
+            .replace("{image_url}", json.dumps(str(image)))
+            .replace("{duration}", json.dumps(int(duration)))
+            .replace("{extra_refs}", json.dumps([str(r) for r in list(extra_refs)[: self.max_extra_refs]]))
+        )
+        return json.loads(body)
+
+    def submit(self, prompt, image, duration, seed=None, extra_refs=()):
+        path = os.getenv("HIGGSFIELD_MODEL_PATH", "").strip()
+        url = HIGGSFIELD_API_BASE.rstrip("/") + "/" + path.lstrip("/")
+        res = requests.post(url, headers=self._headers(),
+                            json=self.build_body(prompt, image, duration, extra_refs), timeout=120)
+        if res.status_code >= 400:
+            raise RuntimeError(
+                f"Higgsfield rejected the request ({res.status_code}) at {path}: {res.text[:300]}\n"
+                f"Check HIGGSFIELD_MODEL_PATH / HIGGSFIELD_BODY_TEMPLATE against the model page."
+            )
+        data = res.json()
+        status_url = data.get("status_url")
+        if not status_url:
+            raise RuntimeError(f"Higgsfield submission returned no status_url: {data}")
+        # The status URL is the handle: polling must use the URL the API handed back.
+        return status_url
+
+    def poll(self, task_id, interval=15, timeout=1800):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            res = requests.get(task_id, headers=self._headers(), timeout=60)
+            res.raise_for_status()
+            data = res.json()
+            status = (data.get("status") or "").lower()
+            log.info(f"Task ...{task_id[-12:]} -> {status}")
+            if status == "completed":
+                video = data.get("video") or {}
+                url = video.get("url") if isinstance(video, dict) else None
+                if not url:
+                    raise RuntimeError(f"Higgsfield finished without a video url: {json.dumps(data)[:400]}")
+                return url
+            if status == "nsfw":
+                raise PolicyViolationError(task_id, "Higgsfield content moderation rejected the request")
+            if status in ("failed", "canceled", "cancelled"):
+                raise RuntimeError(f"Higgsfield request {status}: {data.get('error')}")
+            time.sleep(interval)
+        raise TimeoutError(f"Polling timed out after {timeout}s")
+
+
+# ======================
+# MANUAL  (write a job manifest, generate elsewhere, resume to review)
+# ======================
+#
+# Not every model has an API key on hand: the Higgsfield MCP in an agent
+# session, a web UI, a colleague's GPU. This backend writes everything a human
+# or an agent needs -- prompt, conditioning image, duration, expected output
+# path -- to `manifest.json`, and exits. Drop the finished mp4s at the listed
+# paths and re-run with --auto-resume: the reviewer and the concat pick up as
+# if the videos had been generated here.
+class ManualBackend(Backend):
+    def check_env(self):
+        return
+
+    def submit(self, prompt, image, duration, seed=None, extra_refs=()):
+        return {"prompt": prompt, "image": str(image), "duration": duration, "seed": seed,
+                "extra_refs": [str(r) for r in extra_refs]}
+
+    def poll(self, task_id, interval=15, timeout=1800):
+        raise ManualGenerationPending(task_id)
+
+
+class ManualGenerationPending(RuntimeError):
+    """Raised by ManualBackend.poll: the driver turns it into a manifest entry."""
+
+    def __init__(self, job):
+        super().__init__("video must be generated outside the pipeline")
+        self.job = job
+
+
+# ======================
 # REGISTRY
 # ======================
 def _env(name, default):
     return os.getenv(name, default)
+
+
+def _env_int(name, default):
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
 
 
 def build_registry():
@@ -617,15 +782,19 @@ def build_registry():
             needs_public_url=True, env_keys=("DASHSCOPE_API_KEY",),
         ),
         "seedance": SeedanceBackend(
-            name="seedance", mode="ref",
+            name="seedance", mode="ref", modes=("ref", "i2v"),
             model_id=_env("SEEDANCE_MODEL", "dreamina-seedance-2-0-260128"),
             ref_duration=15, panel_clamp=(4, 5),
+            max_ref_duration=_env_int("SEEDANCE_MAX_DURATION", 15),
+            supports_extra_refs=True, max_extra_refs=_env_int("SEEDANCE_MAX_EXTRA_REFS", 4),
             needs_public_url=True, env_keys=("ARK_API_KEY",),
         ),
         "minimax-api": MiniMaxApiBackend(
             name="minimax-api", mode="ref",
             model_id=_env("MINIMAX_MODEL", MINIMAX_DEFAULT_MODEL),
             ref_duration=15, panel_clamp=(4, 6),
+            max_ref_duration=_env_int("MINIMAX_MAX_DURATION", 15),
+            supports_extra_refs=True, max_extra_refs=_env_int("MINIMAX_MAX_EXTRA_REFS", 3),
             # Not needs_public_url: MiniMax cannot reliably fetch our ImgBB links
             # (it fails the task with "media url unreachable" while the same URL serves
             # fine from here and to Seedance), so the image is inlined instead.
@@ -644,10 +813,25 @@ def build_registry():
             ref_duration=5, panel_clamp=(2, 5),
             batch=True, is_local=True, weights_dirname="Index-anisora",
         ),
+        "higgsfield": HiggsfieldBackend(
+            name="higgsfield", mode=_env("HIGGSFIELD_ROUTE", "ref"), modes=("ref", "i2v"),
+            model_id=_env("HIGGSFIELD_MODEL_PATH", ""),
+            ref_duration=_env_int("HIGGSFIELD_REF_DURATION", 15), panel_clamp=(4, 10),
+            max_ref_duration=_env_int("HIGGSFIELD_MAX_DURATION", 15),
+            supports_extra_refs=True, max_extra_refs=_env_int("HIGGSFIELD_MAX_EXTRA_REFS", 4),
+            needs_public_url=True, env_keys=("HIGGSFIELD_API_KEY", "HIGGSFIELD_API_SECRET"),
+        ),
+        "manual": ManualBackend(
+            name="manual", mode=_env("MANUAL_ROUTE", "i2v"), modes=("ref", "i2v"),
+            model_id=_env("MANUAL_MODEL_LABEL", "manual"),
+            ref_duration=15, panel_clamp=(2, 10),
+            max_ref_duration=_env_int("MANUAL_MAX_DURATION", 30),
+            supports_extra_refs=True, max_extra_refs=9,
+        ),
     }
 
 
-BACKEND_NAMES = ["wan", "seedance", "minimax-local", "minimax-api", "anisora"]
+BACKEND_NAMES = ["wan", "seedance", "minimax-local", "minimax-api", "anisora", "higgsfield", "manual"]
 
 def detect_backend(model_id):
     """Guess the backend from a generation model id.
@@ -659,6 +843,10 @@ def detect_backend(model_id):
     m = (model_id or "").lower()
     if not m:
         return None
+    if m in ("manual", "manifest"):
+        return "manual"
+    if "higgsfield" in m or m.startswith("/"):
+        return "higgsfield"
     if "wan" in m:
         return "wan"
     if "anisora" in m:

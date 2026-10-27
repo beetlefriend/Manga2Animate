@@ -8,7 +8,7 @@ from google.genai import types
 from dotenv import load_dotenv
 from src.log import error, info, step, subsection, success, warn
 from src.runs import results_dir_from_env
-from src.utils import find_character_ref_images, make_genai_client, with_retry
+from src.utils import character_ref_images, make_genai_client, with_retry
 
 load_dotenv()
 
@@ -142,7 +142,7 @@ def compare_same_script(sb_a: Path, sb_b: Path, script_path: Path, out_path: Pat
     prompt = template.replace("{Script JSON}", script_text)
 
     panels = [TARGET_DIR / "manga_panels" / f"panel{i}.png" for i in range(1, NUM_CLIPS + 1)]
-    refs = [p for _, p in find_character_ref_images(TARGET_DIR)]
+    refs = [p for _, p in character_ref_images(TARGET_DIR)]
     result = call_reviewer(prompt, [*panels, *refs, sb_a, sb_b], "same_script reviewer")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -160,7 +160,7 @@ def compare_different_script(
     prompt = prompt.replace("{Script 2 JSON}", script_b.read_text(encoding="utf-8"))
 
     panels = [TARGET_DIR / "manga_panels" / f"panel{i}.png" for i in range(1, NUM_CLIPS + 1)]
-    refs = [p for _, p in find_character_ref_images(TARGET_DIR)]
+    refs = [p for _, p in character_ref_images(TARGET_DIR)]
     result = call_reviewer(prompt, [*panels, *refs, sb_a, sb_b], "different_script reviewer")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

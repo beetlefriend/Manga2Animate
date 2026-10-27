@@ -1,9 +1,20 @@
 """Shared rich-based pretty logging for the pipeline."""
+import sys
 from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
+
+# The log lines use → ✓ ✗ ·. A Windows console in a legacy code page (cp1252)
+# raises UnicodeEncodeError on them from inside rich; switching stdout to UTF-8
+# (replacing anything still unencodable) keeps the same output everywhere else.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if (_stream.encoding or "").lower().replace("-", "") != "utf8":
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 console = Console()
 _file_console: Console | None = None

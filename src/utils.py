@@ -1,14 +1,50 @@
+import json
+import mimetypes
 import os
 import re
 import time
 from pathlib import Path
 
 from google import genai
+from google.genai import types
 
 from src import metrics
 from src.log import error, status, warn
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
+
+
+def is_dry_run() -> bool:
+    """DRY_RUN=1 is exported by run_all.py --dry-run / full_pipeline.py --dry-run.
+    Stages that honour it build and save their prompts without calling a model."""
+    return os.environ.get("DRY_RUN", "").strip().lower() in {"1", "true", "yes"}
+
+
+def image_part(path: Path) -> types.Part:
+    """A Gemini image Part for a local file, mime type from the extension."""
+    mime, _ = mimetypes.guess_type(str(path))
+    return types.Part.from_bytes(data=Path(path).read_bytes(), mime_type=mime or "image/png")
+
+
+def parse_json_object(text: str) -> dict | None:
+    """The first {...} object in a model reply, tolerating ``` fences and prose."""
+    if not text:
+        return None
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines)
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(cleaned[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def make_genai_client() -> genai.Client:
@@ -208,6 +244,48 @@ def find_character_ref_images(directory: Path) -> list[tuple[int, Path]]:
         f"No character reference image found: expected {directory}/characters/char<id>.* "
         f"or a legacy {directory}/ref.*"
     )
+
+
+def generated_character_sheets() -> list[tuple[int, Path]]:
+    """Usable model sheets from src/character_sheets.py, if that stage ran.
+
+    run_all.py exports CHARACTER_SHEETS_DIR after the stage; the manifest there
+    lists one sheet per character id and the ids the reviewer rejected."""
+    sheets_dir = os.environ.get("CHARACTER_SHEETS_DIR", "").strip()
+    if not sheets_dir:
+        return []
+    manifest = Path(sheets_dir) / "manifest.json"
+    if not manifest.is_file():
+        return []
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    unusable = {str(u) for u in data.get("unusable", [])}
+    out: list[tuple[int, Path]] = []
+    for cid, path in (data.get("sheets") or {}).items():
+        if str(cid) in unusable:
+            continue
+        p = Path(path)
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTS | {".webp"}:
+            try:
+                out.append((int(cid), p))
+            except ValueError:
+                continue
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def character_ref_images(directory: Path, include_sheets: bool = True) -> list[tuple[int, Path]]:
+    """The shipped references, followed by the generated model sheets when they
+    exist. Shipped refs come first so prompts that read "image 7 onward are the
+    character references" keep the ground-truth images in front. Stages that
+    judge fidelity against the source (the script reviewers) should keep calling
+    find_character_ref_images() instead."""
+    refs = find_character_ref_images(directory)
+    if not include_sheets:
+        return refs
+    return refs + generated_character_sheets()
 
 
 def with_retry(fn, max_retries: int = 20, delay: float = 5.0, default=None, label: str | None = None):

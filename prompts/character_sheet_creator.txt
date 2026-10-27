@@ -1,0 +1,20 @@
+Create a clean anime CHARACTER MODEL SHEET (設定画) for ONE character, in the art style of the source manga, coloured according to the reference image(s).
+
+Image Input Order:
+1-{Panel Count}. Source manga panels in reading order. They are the ground truth for this character's face, hair, wardrobe, props and proportions. The character to draw is the one described below as Character[{Character Id}]; ignore the other characters in the panels except to tell them apart.
+{Panel Count Plus One} onward. Character reference image(s): a composite sheet of all characters and/or one image per character. Use them for colours (hair, eyes, clothing) and to confirm identity.
+
+Character to draw:
+Character[{Character Id}]: {Character Description}
+
+Layout (single landscape sheet, pure white background, equal-height rows):
+- Row 1, "TURNAROUND": four full-body standing views of the identical character, evenly spaced, feet on the same baseline, arms relaxed: front view, three-quarter view, side profile, back view. Same outfit as the manga, no pose changes.
+- Row 2, "EXPRESSIONS": six head-and-shoulders portraits of the same character at the same scale: neutral, determined / angry, surprised, smiling, in pain / strained, and one expression that matches this character's strongest moment in the manga panels.
+- Row 3, "DETAILS": three call-outs: a close-up of the face at three-quarter angle, the hands (with any object the character holds in the manga), and one wardrobe or accessory detail (badge, scar, pattern, weapon, bag) drawn large.
+
+Requirements:
+- The character must be the SAME person in every view: same face shape, eye shape and colour, hairstyle and parting, skin tone, body build, clothing cut and colours, and all asymmetric features on the correct side (a scar over the left eye stays over the left eye; mirror correctly in the back view).
+- Clothing and props must match the manga panels exactly; colours follow the reference image(s); keep the manga's line style and shading simplicity (clean line art with flat colour and light cel shading).
+- Only this one character on the sheet. No other characters, no background, no props other than what this character carries.
+- Short row labels ("TURNAROUND", "EXPRESSIONS", "DETAILS") are the ONLY text allowed. No dialogue, no speech bubbles, no sound-effect lettering, no notes, no watermark.
+- Professional model-sheet quality: consistent scale within each row, thin construction baseline under the turnaround, generous white margins.
